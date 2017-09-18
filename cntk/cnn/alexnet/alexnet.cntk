@@ -5,10 +5,10 @@ stderr  = "./output_$ConfigName$_Train.log"
 ndlMacros=$ConfigDir$/Macros.ndl
 
 precision=float
-deviceId=1
+deviceId=Auto
 minibatchSize=16
 epochSize=320 #2560
-maxEpochs=2
+maxEpochs=10
 
 command=Train
 
@@ -26,7 +26,7 @@ parallelTrain=false
 Train=[
     action=train
     modelPath=$ModelDir$/AlexNet
-    deviceId=Auto
+    deviceId=$deviceId$
     NDLNetworkBuilder=[
         networkDescription=$ConfigDir$/AlexNet.ndl
     ]

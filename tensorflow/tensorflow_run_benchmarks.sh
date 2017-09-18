@@ -1,13 +1,13 @@
 #!/bin/bash
 
-CMBS=16
-CNB=100
+CMBS=4
+CNB=1000
 
-RMBS=128
-RNB=100
+RMBS=32
+RNB=1000
 
-FMBS=8192
-FNB=100
+FMBS=128
+FNB=1000
 
 for i in "$@"
 do
@@ -38,7 +38,7 @@ case $i in
     FNB="${i#*=}"
     shift # past argument=value
     ;;
-
+	
     --default)
     DEFAULT=YES
     shift # past argument with no value
@@ -49,17 +49,17 @@ case $i in
 esac
 done
 
-sudo rm -f output_alexnet.log
-sudo rm -f output_resnet.log
-sudo rm -f output_fcn5.log
-sudo rm -f output_fcn8.log
-sudo rm -f output_lstm32.log
-sudo rm -f output_lstm64.log
+rm -f output_alexnet.log
+rm -f output_resnet.log
+rm -f output_fcn5.log
+rm -f output_fcn8.log
+rm -f output_lstm32.log
+rm -f output_lstm64.log
 
-python benchmark.py --arch fcn5 --batch-size ${FMBS} --num-batches ${FNB} 2>&1 | tee output_fcn5.log
-python benchmark.py --arch fcn8 --batch-size ${FMBS} --num-batches ${FNB} 2>&1 | tee output_fcn8.log
-python benchmark.py --arch alexnet --batch-size ${CMBS} --num-batches ${CNB} 2>&1 | tee output_alexnet.log
-python benchmark.py --arch resnet --batch-size ${CMBS} --num-batches ${CNB} 2>&1 | tee output_resnet.log
-python rnn/lstm/lstm.py --batchsize ${RMBS} --iters ${RNB} --seqlen 32 --numlayer 2 --hiddensize 256 --device 0 --data_path ../cntk/rnn/PennTreebank/Data 2>&1 | tee output_lstm32.log
-python rnn/lstm/lstm.py --batchsize ${RMBS} --iters ${RNB} --seqlen 64 --numlayer 2 --hiddensize 256 --device 0 --data_path ../cntk/rnn/PennTreebank/Data 2>&1 | tee output_lstm64.log
+CUDA_VISIBLE_DEVICES='0' python benchmark.py --arch fcn5 --batch-size ${FMBS} --num-batches ${FNB} 2>&1 | tee output_fcn5.log
+CUDA_VISIBLE_DEVICES='0' python benchmark.py --arch fcn8 --batch-size ${FMBS} --num-batches ${FNB} 2>&1 | tee output_fcn8.log
+CUDA_VISIBLE_DEVICES='0' python benchmark.py --arch alexnet --batch-size ${CMBS} --num-batches ${CNB} 2>&1 | tee output_alexnet.log
+CUDA_VISIBLE_DEVICES='0' python benchmark.py --arch resnet --batch-size ${CMBS} --num-batches ${CNB} 2>&1 | tee output_resnet.log
+CUDA_VISIBLE_DEVICES='0' python rnn/lstm/lstm.py --batchsize ${RMBS} --iters ${RNB} --seqlen 32 --numlayer 2 --hiddensize 256 --device 0 --data_path ../cntk/rnn/PennTreebank/Data 2>&1 | tee output_lstm32.log
+CUDA_VISIBLE_DEVICES='0' python rnn/lstm/lstm.py --batchsize ${RMBS} --iters ${RNB} --seqlen 64 --numlayer 2 --hiddensize 256 --device 0 --data_path ../cntk/rnn/PennTreebank/Data 2>&1 | tee output_lstm64.log
  

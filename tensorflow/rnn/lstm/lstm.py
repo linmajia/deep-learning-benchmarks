@@ -85,7 +85,7 @@ def _build_vocab(filename):
 def _file_to_word_ids(filename, word_to_id, max_vacab_size):
   data = _read_words(filename)
   ret = [word_to_id[word] for word in data]
-  for i in xrange(len(ret)):
+  for i in range(len(ret)):
     if ret[i] >= max_vacab_size:
       ret[i] = max_vacab_size - 1
   return ret
@@ -178,6 +178,10 @@ flags.DEFINE_integer("iters", 1000, "iterations for profiling")
 
 FLAGS = flags.FLAGS
 
+BASIC = "basic"
+CUDNN = "cudnn"
+BLOCK = "block"
+
 def PrintParameterCount():
   total_parameters = 0
   for variable in tf.trainable_variables():
@@ -190,7 +194,9 @@ def PrintParameterCount():
     total_parameters += variable_parametes
   print("Parameter Number:" + str(total_parameters))
 
-
+def data_type():
+  return tf.float32
+  
 class PTBModel(object):
   """The PTB model."""
 
@@ -213,20 +219,18 @@ class PTBModel(object):
 
     embedding = tf.get_variable("embedding", [vocab_size, num_units])
     inputs = tf.nn.embedding_lookup(embedding, self._input_data)
-    inputs = [tf.squeeze(input_, [1]) for input_ in tf.split(1, num_steps, inputs)]
+    #inputs = [tf.squeeze(input_, [1]) for input_ in tf.split(1, num_steps, inputs)]
 
     # Slightly better results can be obtained with forget gate biases
     # initialized to 1 but the hyperparameters of the model would need to be
     # different than reported in the paper.
-    lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units, forget_bias=0.0, state_is_tuple=True)
+    #lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units, forget_bias=0.0, state_is_tuple=True)
 
-    cell = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * config.num_layers, state_is_tuple=True)
+    #cell = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * config.num_layers, state_is_tuple=True)
 
-    self._initial_state = cell.zero_state(batch_size, tf.float32)
+    #self._initial_state = cell.zero_state(batch_size, tf.float32)
 
-    outputs, state = tf.nn.rnn(cell, inputs, initial_state=self._initial_state)
-
-
+    #outputs, state = tf.nn.rnn(cell, inputs, initial_state=self._initial_state)
 
     # #use cudnn_rnn
     # model = tf.contrib.cudnn_rnn.CudnnLSTM(config.num_layers, num_units, num_units)
@@ -243,17 +247,27 @@ class PTBModel(object):
 
     # state = (output_c, output_h)
 
+    if is_training and config.keep_prob < 1:
+      inputs = tf.nn.dropout(inputs, config.keep_prob)
 
-    output = tf.reshape(tf.concat(1, outputs), [-1, num_units])
+    output, state = self._build_rnn_graph(inputs, config, is_training)
 
-    softmax_w = tf.get_variable("softmax_w", [num_units, vocab_size])
-    softmax_b = tf.get_variable("softmax_b", [vocab_size])
-    logits = tf.matmul(output, softmax_w) + softmax_b
-    loss = tf.nn.seq2seq.sequence_loss_by_example(
-        [logits],
-        [tf.reshape(self._targets, [-1])],
-        [tf.ones([batch_size * num_steps])])
-    self._cost = cost = tf.reduce_sum(loss) / batch_size
+    softmax_w = tf.get_variable(
+        "softmax_w", [num_units, vocab_size], dtype=data_type())
+    softmax_b = tf.get_variable("softmax_b", [vocab_size], dtype=data_type())
+    logits = tf.nn.xw_plus_b(output, softmax_w, softmax_b)
+     # Reshape logits to be a 3-D tensor for sequence loss
+    logits = tf.reshape(logits, [self.batch_size, self.num_steps, vocab_size])
+
+    # Use the contrib sequence loss and average over the batches
+    loss = tf.contrib.seq2seq.sequence_loss(
+        logits,
+        self._targets,
+        tf.ones([self.batch_size, self.num_steps], dtype=data_type()),
+        average_across_timesteps=False,
+        average_across_batch=True)
+    
+    self._cost = cost = tf.reduce_sum(loss)
     self._final_state = state
 
     if not is_training:
@@ -266,6 +280,78 @@ class PTBModel(object):
     optimizer = tf.train.GradientDescentOptimizer(self.lr)
     self._train_op = optimizer.apply_gradients(zip(grads, tvars))
 
+  def _build_rnn_graph(self, inputs, config, is_training):
+    if config.rnn_mode == CUDNN:
+      return self._build_rnn_graph_cudnn(inputs, config, is_training)
+    else:
+      return self._build_rnn_graph_lstm(inputs, config, is_training)
+
+  def _build_rnn_graph_cudnn(self, inputs, config, is_training):
+    """Build the inference graph using CUDNN cell."""
+    inputs = tf.transpose(inputs, [1, 0, 2])
+    self._cell = tf.contrib.cudnn_rnn.CudnnLSTM(
+        num_layers=config.num_layers,
+        num_units=config.hidden_size,
+        input_size=config.hidden_size,
+        dropout=1 - config.keep_prob if is_training else 0)
+    params_size_t = self._cell.params_size()
+    self._rnn_params = tf.get_variable(
+        "lstm_params",
+        initializer=tf.random_uniform(
+            [params_size_t], -config.init_scale, config.init_scale),
+        validate_shape=False)
+    c = tf.zeros([config.num_layers, self.batch_size, config.hidden_size],
+                 tf.float32)
+    h = tf.zeros([config.num_layers, self.batch_size, config.hidden_size],
+                 tf.float32)
+    self._initial_state = (tf.contrib.rnn.LSTMStateTuple(h=h, c=c),)
+    outputs, h, c = self._cell(inputs, h, c, self._rnn_params, is_training)
+    outputs = tf.transpose(outputs, [1, 0, 2])
+    outputs = tf.reshape(outputs, [-1, config.hidden_size])
+    return outputs, (tf.contrib.rnn.LSTMStateTuple(h=h, c=c),)
+
+  def _get_lstm_cell(self, config, is_training):
+    if config.rnn_mode == BASIC:
+      return tf.contrib.rnn.BasicLSTMCell(
+          config.hidden_size, forget_bias=0.0, state_is_tuple=True,
+          reuse=not is_training)
+    if config.rnn_mode == BLOCK:
+      return tf.contrib.rnn.LSTMBlockCell(
+          config.hidden_size, forget_bias=0.0)
+    raise ValueError("rnn_mode %s not supported" % config.rnn_mode)
+
+  def _build_rnn_graph_lstm(self, inputs, config, is_training):
+    """Build the inference graph using canonical LSTM cells."""
+    # Slightly better results can be obtained with forget gate biases
+    # initialized to 1 but the hyperparameters of the model would need to be
+    # different than reported in the paper.
+    cell = self._get_lstm_cell(config, is_training)
+    if is_training and config.keep_prob < 1:
+      cell = tf.contrib.rnn.DropoutWrapper(
+          cell, output_keep_prob=config.keep_prob)
+
+    cell = tf.contrib.rnn.MultiRNNCell(
+        [cell for _ in range(config.num_layers)], state_is_tuple=True)
+
+    self._initial_state = cell.zero_state(config.batch_size, data_type())
+    state = self._initial_state
+    # Simplified version of tensorflow_models/tutorials/rnn/rnn.py's rnn().
+    # This builds an unrolled LSTM for tutorial purposes only.
+    # In general, use the rnn() or state_saving_rnn() from rnn.py.
+    #
+    # The alternative version of the code below is:
+    #
+    # inputs = tf.unstack(inputs, num=num_steps, axis=1)
+    # outputs, state = tf.contrib.rnn.static_rnn(cell, inputs,
+    #                            initial_state=self._initial_state)
+    outputs = []
+    with tf.variable_scope("RNN"):
+      for time_step in range(self.num_steps):
+        if time_step > 0: tf.get_variable_scope().reuse_variables()
+        (cell_output, state) = cell(inputs[:, time_step, :], state)
+        outputs.append(cell_output)
+    output = tf.reshape(tf.concat(outputs, 1), [-1, config.hidden_size])
+    return output, state
 
   def assign_lr(self, session, lr_value):
     session.run(tf.assign(self.lr, lr_value))
@@ -315,6 +401,7 @@ class SmallConfig(object):
   vocab_size = 10000 # 10000 will overflow
   device = 0
   iters = 1000
+  rnn_mode = BASIC
 
 def run_epoch(session, m, data, eval_op, ITERS, verbose=False):
   """Runs the model on the given data."""

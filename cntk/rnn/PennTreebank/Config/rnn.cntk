@@ -12,9 +12,9 @@ stderr  = "./output_$ConfigName$_Train.log"
 
 # deviceId=-1 for CPU, >=0 for GPU devices, "auto" chooses the best GPU, or CPU if no usable GPU is available
 epochSize=40960
-deviceId=0 
+deviceId=$deviceId$
 minibatchSize=4096
-maxEpochs = 3 
+maxEpochs = 30 
 
 command = train
 

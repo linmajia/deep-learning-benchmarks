@@ -10,10 +10,10 @@ ndlMacros="$ConfigDir$/Macros.ndl"
 precision="float"
 prefetch=true
 
-deviceId=0
+deviceId=Auto
 minibatchSize=16
 epochSize=512
-maxEpochs=2
+maxEpochs=10
 
 command=Train
 
@@ -34,7 +34,7 @@ stride3x3=2
 Train=[
     action="train"
     modelPath="$ModelDir$/ResNet_50"
-    deviceId=Auto
+    deviceId=$deviceId$
     NDLNetworkBuilder=[
         networkDescription="$ConfigDir$/ResNet_50.ndl"
     ]

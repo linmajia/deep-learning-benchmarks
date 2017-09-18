@@ -16,3 +16,8 @@ theano/pylearn2/
 theano/scikits.cuda/
 *.pyc
 *.swp
+cntk/Output/
+cntk/cnn/imagenet_data.txt
+cntk/cnn/labelmap.1K.txt
+cntk/fcn/data26752.txt
+cntk/fcn/labelmap26752.txt
